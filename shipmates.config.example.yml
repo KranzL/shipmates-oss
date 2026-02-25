@@ -1,0 +1,28 @@
+discord_guild_id: "YOUR_DISCORD_SERVER_ID"
+slack_workspace_id: "YOUR_SLACK_WORKSPACE_ID"
+
+llm:
+  provider: anthropic
+  base_url: ""
+  model_id: ""
+
+github:
+  repos:
+    - your-username/your-repo
+
+agents:
+  - name: Alex
+    role: Full-Stack Developer
+    personality: "Pragmatic and fast. Ships clean code quickly."
+    voice: default
+    scope:
+      directories: ["src/", "lib/"]
+      languages: ["typescript", "python"]
+
+  - name: Sam
+    role: Backend Engineer
+    personality: "Methodical. Thinks about edge cases and scalability."
+    voice: default
+    scope:
+      directories: ["api/", "services/"]
+      languages: ["go", "python"]

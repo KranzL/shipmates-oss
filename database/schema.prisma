@@ -1,0 +1,429 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum LLMProvider {
+  anthropic
+  openai
+  google
+  venice
+  groq
+  together
+  fireworks
+  custom
+}
+
+enum Platform {
+  discord
+  slack
+}
+
+enum SessionStatus {
+  pending
+  running
+  done
+  error
+  waiting_for_clarification
+  cancelling
+  cancelled
+  partial
+}
+
+enum UsageType {
+  voice_minutes
+  container_seconds
+  task_count
+  llm_tokens
+}
+
+enum ClarificationStatus {
+  pending
+  answered
+  expired
+}
+
+enum ExecutionMode {
+  container
+  direct
+  review
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  githubConnection GithubConnection?
+  apiKeys          ApiKey[]
+  agents           Agent[]
+  workspaces       Workspace[]
+  sessions         Session[]
+  usageRecords     UsageRecord[]
+  schedules        AgentSchedule[]
+  issuePipelines   IssuePipeline[]
+  delegatedTasks   DelegatedTask[]
+
+  @@map("users")
+}
+
+model GithubConnection {
+  id             String   @id @default(cuid())
+  userId         String   @unique @map("user_id")
+  githubUsername String   @map("github_username")
+  githubToken    String   @map("github_token")
+  repos          String[]
+  webhookSecret  String?  @map("webhook_secret")
+  issueLabel     String?  @default("shipmates") @map("issue_label")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("github_connections")
+}
+
+model ApiKey {
+  id        String      @id @default(cuid())
+  userId    String      @map("user_id")
+  provider  LLMProvider
+  apiKey    String      @map("api_key")
+  label     String      @default("")
+  baseUrl   String?     @map("base_url")
+  modelId   String?     @map("model_id")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agents Agent[]
+
+  @@unique([userId, provider])
+  @@map("api_keys")
+}
+
+model Agent {
+  id                 String   @id @default(cuid())
+  userId             String   @map("user_id")
+  name               String
+  role               String
+  personality        String
+  voiceId            String   @map("voice_id")
+  scopeConfig        Json     @map("scope_config")
+  apiKeyId           String?  @map("api_key_id")
+  templateId         String?  @map("template_id")
+  canDelegateTo      String[] @map("can_delegate_to")
+  maxCostPerTask     Float    @default(10.0) @map("max_cost_per_task")
+  maxDelegationDepth Int      @default(0) @map("max_delegation_depth")
+  autonomyLevel      String   @default("standard") @map("autonomy_level")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey             ApiKey?               @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  history            ConversationHistory[]
+  sessions           Session[]
+  schedules          AgentSchedule[]
+  issuePipelines     IssuePipeline[]
+  delegatedFromTasks DelegatedTask[]       @relation("DelegatedFrom")
+  delegatedToTasks   DelegatedTask[]       @relation("DelegatedTo")
+
+  @@map("agents")
+}
+
+model Workspace {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  platform    Platform
+  platformId  String   @map("platform_id")
+  botToken    String?  @map("bot_token")
+  botUserId   String?  @map("bot_user_id")
+  teamName    String?  @map("team_name")
+  connectedAt DateTime @default(now()) @map("connected_at")
+
+  user    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  history ConversationHistory[]
+
+  @@unique([platform, platformId])
+  @@map("workspaces")
+}
+
+model ConversationHistory {
+  id          String   @id @default(cuid())
+  workspaceId String   @map("workspace_id")
+  agentId     String   @map("agent_id")
+  role        String
+  content     String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agent     Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("conversation_history")
+}
+
+model Session {
+  id                  String        @id @default(cuid())
+  userId              String        @map("user_id")
+  agentId             String        @map("agent_id")
+  task                String
+  status              SessionStatus @default(pending)
+  executionMode       ExecutionMode @default(container) @map("execution_mode")
+  output              String?
+  branchName          String?       @map("branch_name")
+  prUrl               String?       @map("pr_url")
+  repo                String?
+  parentSessionId     String?       @map("parent_session_id")
+  chainId             String?       @map("chain_id")
+  position            Int           @default(0)
+  startedAt           DateTime?     @map("started_at")
+  finishedAt          DateTime?     @map("finished_at")
+  shareToken          String?       @unique @map("share_token")
+  shareTokenExpiresAt DateTime?     @map("share_token_expires_at")
+  coverageData        Json?         @map("coverage_data")
+  starred             Boolean       @default(false)
+  platformThreadId    String?       @map("platform_thread_id")
+  platformUserId      String?       @map("platform_user_id")
+  scheduleId          String?       @map("schedule_id")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent               Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  parentSession       Session?          @relation("SessionChain", fields: [parentSessionId], references: [id])
+  childSessions       Session[]         @relation("SessionChain")
+  outputs             SessionOutput[]
+  clarifications      Clarification[]
+  usageRecords        UsageRecord[]
+  feedback            SessionFeedback?
+  engineExecutions    EngineExecution[]
+  schedule            AgentSchedule?    @relation("ScheduledSessions", fields: [scheduleId], references: [id], onDelete: SetNull)
+  issuePipeline       IssuePipeline?
+  parentDelegatedTask DelegatedTask?    @relation("ParentDelegation")
+  childDelegatedTask  DelegatedTask?    @relation("ChildDelegation")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, status])
+  @@map("sessions")
+}
+
+model AgentTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  role        String
+  personality String
+  voiceId     String   @map("voice_id")
+  scopeConfig Json     @map("scope_config")
+  category    String
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("agent_templates")
+}
+
+model UsageRecord {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  type       UsageType
+  quantity   Decimal   @db.Decimal(12, 4)
+  metadata   Json?
+  sessionId  String?   @map("session_id")
+  recordedAt DateTime  @default(now()) @map("recorded_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, type, recordedAt])
+  @@map("usage_records")
+}
+
+model SessionOutput {
+  id        String   @id @default(cuid())
+  sessionId String   @map("session_id")
+  sequence  Int
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sequence])
+  @@map("session_outputs")
+}
+
+model Clarification {
+  id         String              @id @default(cuid())
+  sessionId  String              @map("session_id")
+  question   String
+  answer     String?
+  status     ClarificationStatus @default(pending)
+  askedAt    DateTime            @default(now()) @map("asked_at")
+  answeredAt DateTime?           @map("answered_at")
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, status])
+  @@map("clarifications")
+}
+
+model SessionFeedback {
+  id        String   @id @default(cuid())
+  sessionId String   @unique @map("session_id")
+  rating    String
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("session_feedback")
+}
+
+model EngineExecution {
+  id              String      @id @default(cuid())
+  sessionId       String      @map("session_id")
+  provider        LLMProvider
+  modelId         String      @map("model_id")
+  strategy        String
+  editFormat      String      @map("edit_format")
+  contextStrategy String      @map("context_strategy")
+  inputTokens     Int         @map("input_tokens")
+  outputTokens    Int         @map("output_tokens")
+  costCents       Decimal     @map("cost_cents") @db.Decimal(10, 4)
+  latencyMs       Int         @map("latency_ms")
+  retryCount      Int         @default(0) @map("retry_count")
+  filesRead       Int         @map("files_read")
+  filesModified   Int         @map("files_modified")
+  taskType        String?     @map("task_type")
+  success         Boolean
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("engine_executions")
+}
+
+model AgentSchedule {
+  id             String    @id @default(cuid())
+  userId         String    @map("user_id")
+  agentId        String    @map("agent_id")
+  name           String
+  task           String
+  cronExpression String    @map("cron_expression")
+  timezone       String    @default("UTC")
+  isActive       Boolean   @default(true) @map("is_active")
+  nextRunAt      DateTime  @map("next_run_at")
+  lastRunAt      DateTime? @map("last_run_at")
+  lastStatus     String?   @map("last_status")
+  runCount       Int       @default(0) @map("run_count")
+  failureCount   Int       @default(0) @map("failure_count")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent    Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sessions Session[] @relation("ScheduledSessions")
+
+  @@index([isActive, nextRunAt])
+  @@index([userId])
+  @@index([agentId])
+  @@map("agent_schedules")
+}
+
+model IssuePipeline {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id")
+  agentId      String    @map("agent_id")
+  repo         String
+  issueNumber  Int       @map("issue_number")
+  issueTitle   String    @map("issue_title")
+  issueBody    String    @map("issue_body") @db.Text
+  issueLabels  String[]  @map("issue_labels")
+  status       String    @default("pending")
+  prNumber     Int?      @map("pr_number")
+  prUrl        String?   @map("pr_url")
+  branchName   String?   @map("branch_name")
+  errorMessage String?   @map("error_message")
+  sessionId    String?   @unique @map("session_id")
+  startedAt    DateTime? @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent   Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([userId])
+  @@index([repo, issueNumber])
+  @@map("issue_pipelines")
+}
+
+model DelegatedTask {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  parentSessionId String?   @unique @map("parent_session_id")
+  childSessionId  String?   @unique @map("child_session_id")
+  fromAgentId     String    @map("from_agent_id")
+  toAgentId       String    @map("to_agent_id")
+  description     String    @db.Text
+  priority        Int       @default(50)
+  status          String    @default("pending")
+  errorMessage    String?   @map("error_message") @db.Text
+  blockedBy       String[]  @map("blocked_by")
+  context         Json
+  maxCostUsd      Float?    @map("max_cost_usd")
+  actualCostUsd   Float?    @map("actual_cost_usd")
+  claimedAt       DateTime? @map("claimed_at")
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromAgent     Agent    @relation("DelegatedFrom", fields: [fromAgentId], references: [id])
+  toAgent       Agent    @relation("DelegatedTo", fields: [toAgentId], references: [id])
+  parentSession Session? @relation("ParentDelegation", fields: [parentSessionId], references: [id])
+  childSession  Session? @relation("ChildDelegation", fields: [childSessionId], references: [id])
+
+  @@index([toAgentId, status, priority])
+  @@index([userId, status])
+  @@index([parentSessionId])
+  @@index([status, blockedBy])
+  @@index([childSessionId])
+  @@map("delegated_tasks")
+}
+
+model TaskLock {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  sessionId String   @map("session_id")
+  agentId   String   @map("agent_id")
+  filePath  String   @map("file_path")
+  lockedAt  DateTime @default(now()) @map("locked_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@unique([userId, filePath])
+  @@index([expiresAt])
+  @@map("task_locks")
+}
+
+model DelegationEvent {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  fromSessionId String   @map("from_session_id")
+  toSessionId   String?  @map("to_session_id")
+  fromAgentId   String   @map("from_agent_id")
+  toAgentId     String   @map("to_agent_id")
+  action        String
+  reason        String?  @db.Text
+  costUsd       Float?   @map("cost_usd")
+  timestamp     DateTime @default(now())
+
+  @@index([userId, timestamp])
+  @@index([fromSessionId])
+  @@map("delegation_events")
+}

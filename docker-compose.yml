@@ -1,0 +1,188 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shipmates}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shipmates}
+      POSTGRES_DB: ${POSTGRES_DB:-shipmates}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shipmates}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      CONTAINERS: 1
+      POST: 1
+      IMAGES: 0
+      VOLUMES: 0
+      NETWORKS: 0
+      EXEC: 0
+      ALLOW_RESTARTS: 0
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_CREATE: 1
+      ALLOW_KILL: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:2375/version || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shipmates}:${POSTGRES_PASSWORD:-shipmates}@db:5432/${POSTGRES_DB:-shipmates}?sslmode=disable
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      RELAY_URL: http://stream-relay:8080
+      RELAY_SECRET: ${RELAY_SECRET}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      DOCKER_HOST: tcp://docker-proxy:2375
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - ./shipmates.config.yml:/app/shipmates.config.yml:ro
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+      stream-relay:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_healthy
+
+  stream-relay:
+    build:
+      context: stream-relay
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shipmates}:${POSTGRES_PASSWORD:-shipmates}@db:5432/${POSTGRES_DB:-shipmates}?sslmode=disable
+      RELAY_SECRET: ${RELAY_SECRET}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  webhook-router:
+    build:
+      context: webhook-router
+    ports:
+      - "8094:8094"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shipmates}:${POSTGRES_PASSWORD:-shipmates}@db:5432/${POSTGRES_DB:-shipmates}?sslmode=disable
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      PR_REVIEW_SERVICE_URL: http://pr-review:8092
+      CI_DIAGNOSIS_SERVICE_URL: http://ci-diagnosis:8093
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+      pr-review:
+        condition: service_healthy
+      ci-diagnosis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8094/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pr-review:
+    build:
+      context: .
+      dockerfile: pr-review/Dockerfile
+    expose:
+      - "8092"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shipmates}:${POSTGRES_PASSWORD:-shipmates}@db:5432/${POSTGRES_DB:-shipmates}?sslmode=disable
+      AUTH_SECRET: ${AUTH_SECRET:-}
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8092/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ci-diagnosis:
+    build:
+      context: .
+      dockerfile: ci-diagnosis/Dockerfile
+    expose:
+      - "8093"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shipmates}:${POSTGRES_PASSWORD:-shipmates}@db:5432/${POSTGRES_DB:-shipmates}?sslmode=disable
+      AUTH_SECRET: ${AUTH_SECRET:-}
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8093/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  test-gen:
+    build:
+      context: .
+      dockerfile: test-gen/Dockerfile
+    expose:
+      - "8095"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shipmates}:${POSTGRES_PASSWORD:-shipmates}@db:5432/${POSTGRES_DB:-shipmates}?sslmode=disable
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      RELAY_URL: http://stream-relay:8080
+      RELAY_SECRET: ${RELAY_SECRET}
+    networks:
+      - internal
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8095/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:
