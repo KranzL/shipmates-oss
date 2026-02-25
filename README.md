@@ -1,8 +1,8 @@
-# Shipmates
+# shipmates
 
-Talk to your AI dev team through Discord and Slack. Give an agent work via voice or text, and walk away. They clone your repo, write code, push branches, and report back.
+talk to ai coding agents through discord and slack voice/text. give them work, hang up, they push code.
 
-## Quick Start
+## quick start
 
 ```bash
 git clone https://github.com/KranzL/shipmates-oss.git
@@ -10,70 +10,83 @@ cd shipmates-oss
 ./setup.sh
 ```
 
-The setup script walks you through creating your own Discord bot and/or Slack app, picking an LLM provider, configuring your agents, and starting everything with Docker Compose.
+the setup script walks you through everything -- discord bot, llm provider, agents, then starts docker compose.
 
-## What You Need
+## what you need
 
-- Docker and Docker Compose
-- An LLM API key (or a self-hosted endpoint)
+- docker + docker compose
+- an llm api key (anthropic, openai, google, or any openai-compatible endpoint)
 
-## Supported Providers
+## docker services
 
-| Provider | Type | What agents do |
+everything runs in docker compose. here's what each service does:
+
+| service | port | what it does |
+|---------|------|-------------|
+| `db` | 5432 | postgres 16 -- stores agents, sessions, config, everything |
+| `bot` | -- | the main brain. discord/slack bot, voice pipeline, orchestrator, task delegation |
+| `stream-relay` | 8080 | websocket relay for streaming live terminal output from agents |
+| `docker-proxy` | 2375 (internal) | proxies the docker socket so the bot can spin up coding containers safely |
+| `webhook-router` | 8094 | receives github webhooks, routes to pr-review or ci-diagnosis |
+| `pr-review` | 8092 (internal) | reviews pull requests using your llm |
+| `ci-diagnosis` | 8093 (internal) | diagnoses ci failures, suggests fixes |
+| `test-gen` | 8095 (internal) | coverage-guided test generation |
+
+internal means the port isn't exposed to the host, only to other services.
+
+the bot talks to docker-proxy to spin up isolated containers per task. each container clones your repo, runs a coding cli (claude code, codex, gemini cli), and pushes a branch.
+
+## supported providers
+
+| provider | type | what agents do |
 |----------|------|----------------|
-| Anthropic | Container | Write code via Claude Code, push branches |
-| OpenAI | Container | Write code via Codex CLI, push branches |
-| Google | Container | Write code via Gemini CLI, push branches |
-| Venice AI | Chat-only | Review code, answer questions |
-| Groq | Chat-only | Review code, answer questions |
-| Together AI | Chat-only | Review code, answer questions |
-| Fireworks AI | Chat-only | Review code, answer questions |
-| Custom | Chat-only | Any OpenAI-compatible endpoint |
+| anthropic | container | write code via claude code, push branches |
+| openai | container | write code via codex cli, push branches |
+| google | container | write code via gemini cli, push branches |
+| venice ai | chat-only | review code, answer questions |
+| groq | chat-only | review code, answer questions |
+| together ai | chat-only | review code, answer questions |
+| fireworks ai | chat-only | review code, answer questions |
+| custom | chat-only | any openai-compatible endpoint |
 
-Container providers spin up isolated Docker containers that clone your repo, run a coding CLI, and push a branch. Chat-only providers use the LLM API directly for code review and conversation.
+container providers spin up docker containers that clone, code, and push. chat-only providers hit the llm api directly.
 
-## How It Works
+## usage
 
-**Discord** -- Join a voice channel and talk, or @mention the bot in text.
+**discord** -- join a voice channel and talk, or @mention the bot in text.
 
-**Slack** -- @mention the bot in any channel, or use slash commands:
+**slack** -- @mention the bot in any channel, or use slash commands:
 - `/shipmates ask <agent> <question>`
 - `/shipmates review <owner/repo>`
 
-The bot routes your message to the right agent by name ("Alex, review the auth module"). Agents with container providers clone your repo, make changes, and push a branch. Chat-only providers do code review using the repo context.
+route to an agent by name: "alex, review the auth module"
 
-## Configuration
+## config
 
-Everything is configured in `shipmates.config.yml`. The setup script generates this for you, or you can write it by hand. See `shipmates.config.example.yml` for the full format.
+everything lives in `shipmates.config.yml`. the setup script generates it, or copy from `shipmates.config.example.yml`.
 
-## Architecture
-
-```
-bot/              Go Discord/Slack bot, voice pipeline, orchestrator, delegation
-go-shared/        Shared Go package (database, crypto, types)
-go-llm/           Multi-provider LLM client (Anthropic, OpenAI, Google, etc.)
-go-github/        GitHub API client
-stream-relay/     Go WebSocket pub/sub relay for live output
-webhook-router/   GitHub webhook routing
-pr-review/        PR code review agent
-ci-diagnosis/     CI failure diagnosis agent
-test-gen/         Coverage-guided test generation
-containers/       Per-provider Dockerfiles (Anthropic, OpenAI, Google)
-database/         PostgreSQL schema
-```
-
-## Manual Setup
+## manual setup
 
 ```bash
 cp .env.example .env
 cp shipmates.config.example.yml shipmates.config.yml
-# Fill in your values, then:
+# fill in your values
 docker compose up --build -d
 ```
 
-## Development
+## env vars
 
-Each service is a standalone Go module. To build:
+check `.env.example` for the full list. the important ones:
+
+- `DISCORD_TOKEN` / `SLACK_BOT_TOKEN` -- at least one platform
+- `LLM_API_KEY` -- your llm provider key
+- `GITHUB_TOKEN` -- for repo access
+- `ENCRYPTION_KEY` -- encrypts stored api keys (32 bytes)
+- `RELAY_SECRET` -- authenticates stream relay connections
+
+## dev
+
+each service is a standalone go module:
 
 ```bash
 cd bot && go build ./...
@@ -84,6 +97,6 @@ cd ci-diagnosis && go build ./...
 cd test-gen && go build ./...
 ```
 
-## License
+## license
 
-Apache 2.0
+apache 2.0
